@@ -1,145 +1,131 @@
-import uuid
 from django.db import models
-from django.contrib.auth.models import AbstractUser
+from django.conf import settings
+import uuid
 from django.utils import timezone
-from django.core.validators import MinValueValidator, MaxValueValidator
 
-
-class User(AbstractUser):
-    """
-    Custom User model for the travel application
-    """
-    USER_ROLES = [
-        ('guest', 'Guest'),
-        ('host', 'Host'),
-        ('admin', 'Admin'),
-    ]
-    
-    user_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    email = models.EmailField(unique=True)
-    phone_number = models.CharField(max_length=20, blank=True, null=True)
-    role = models.CharField(max_length=10, choices=USER_ROLES, default='guest')
-    created_at = models.DateTimeField(default=timezone.now)
-    
-    username = None
-    USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = ['first_name', 'last_name']
-    
-    class Meta:
-        db_table = 'user'
-    
-    def __str__(self):
-        return f"{self.first_name} {self.last_name} ({self.email})"
-
-
-class Listing(models.Model):
-    """
-    Property listing model
-    """
-    PROPERTY_TYPES = [
-        ('apartment', 'Apartment'),
-        ('house', 'House'),
-        ('villa', 'Villa'),
-        ('condo', 'Condo'),
-        ('cabin', 'Cabin'),
-    ]
-    
-    listing_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    host = models.ForeignKey(User, on_delete=models.CASCADE, related_name='listings')
-    title = models.CharField(max_length=200)
-    description = models.TextField()
-    property_type = models.CharField(max_length=20, choices=PROPERTY_TYPES)
-    price_per_night = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
-    max_guests = models.IntegerField(validators=[MinValueValidator(1)])
-    bedrooms = models.IntegerField(validators=[MinValueValidator(0)])
-    bathrooms = models.IntegerField(validators=[MinValueValidator(0)])
-    address = models.TextField()
-    city = models.CharField(max_length=100)
-    country = models.CharField(max_length=100)
-    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
-    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
-    amenities = models.JSONField(default=list)
-    is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(default=timezone.now)
+class Booking(models.Model):
+    """Booking model (assuming it exists)"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    listing = models.ForeignKey('Listing', on_delete=models.CASCADE)
+    check_in = models.DateField()
+    check_out = models.DateField()
+    number_of_guests = models.IntegerField(default=1)
+    total_price = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ('pending', 'Pending'),
+            ('confirmed', 'Confirmed'),
+            ('cancelled', 'Cancelled'),
+            ('completed', 'Completed')
+        ],
+        default='pending'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
+    def __str__(self):
+        return f"Booking {self.id} - {self.user.email}"
+
+class Payment(models.Model):
+    """Payment model to store payment information"""
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('success', 'Success'),
+        ('failed', 'Failed'),
+        ('expired', 'Expired'),
+        ('cancelled', 'Cancelled'),
+    ]
+    
+    PAYMENT_METHOD_CHOICES = [
+        ('chapa', 'Chapa'),
+        ('telebirr', 'Telebirr'),
+        ('bank', 'Bank Transfer'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name='payments')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    
+    # Payment Details
+    tx_ref = models.CharField(max_length=100, unique=True, editable=False)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    currency = models.CharField(max_length=3, default='ETB')
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default='chapa')
+    
+    # Status Tracking
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    chapa_transaction_id = models.CharField(max_length=100, blank=True, null=True)
+    checkout_url = models.URLField(max_length=500, blank=True, null=True)
+    
+    # Customer Information
+    customer_email = models.EmailField()
+    customer_first_name = models.CharField(max_length=100)
+    customer_last_name = models.CharField(max_length=100)
+    customer_phone = models.CharField(max_length=20, blank=True, null=True)
+    
+    # Metadata
+    description = models.TextField(blank=True, null=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    payment_date = models.DateTimeField(null=True, blank=True)
+    
+    # Error handling
+    error_message = models.TextField(blank=True, null=True)
+    retry_count = models.IntegerField(default=0)
+    
     class Meta:
-        db_table = 'listing'
+        ordering = ['-created_at']
         indexes = [
-            models.Index(fields=['city', 'country']),
-            models.Index(fields=['price_per_night']),
+            models.Index(fields=['tx_ref']),
+            models.Index(fields=['status']),
             models.Index(fields=['created_at']),
         ]
     
     def __str__(self):
-        return f"{self.title} - {self.city}, {self.country}"
-
-
-class Booking(models.Model):
-    """
-    Booking model for property reservations
-    """
-    STATUS_CHOICES = [
-        ('pending', 'Pending'),
-        ('confirmed', 'Confirmed'),
-        ('cancelled', 'Cancelled'),
-        ('completed', 'Completed'),
-    ]
+        return f"Payment {self.tx_ref} - {self.amount} {self.currency} - {self.status}"
     
-    booking_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='bookings')
-    listing = models.ForeignKey(Listing, on_delete=models.CASCADE, related_name='bookings')
-    check_in = models.DateField()
-    check_out = models.DateField()
-    total_price = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
-    guests = models.IntegerField(validators=[MinValueValidator(1)])
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
-    special_requests = models.TextField(blank=True)
-    created_at = models.DateTimeField(default=timezone.now)
-    updated_at = models.DateTimeField(auto_now=True)
+    def save(self, *args, **kwargs):
+        # Generate unique transaction reference if not set
+        if not self.tx_ref:
+            self.tx_ref = f"TRX-{uuid.uuid4().hex[:12].upper()}-{int(timezone.now().timestamp())}"
+        
+        # Update booking status if payment is successful
+        if self.status == 'success' and self.booking.status != 'confirmed':
+            self.booking.status = 'confirmed'
+            self.booking.save()
+        
+        super().save(*args, **kwargs)
     
-    class Meta:
-        db_table = 'booking'
-        indexes = [
-            models.Index(fields=['user', 'status']),
-            models.Index(fields=['check_in', 'check_out']),
-        ]
-        constraints = [
-            models.CheckConstraint(
-                check=models.Q(check_out__gt=models.F('check_in')),
-                name='check_out_after_check_in'
-            )
-        ]
+    def mark_as_paid(self, transaction_id=None, payment_date=None):
+        """Mark payment as successful"""
+        self.status = 'success'
+        if transaction_id:
+            self.chapa_transaction_id = transaction_id
+        if payment_date:
+            self.payment_date = payment_date
+        else:
+            self.payment_date = timezone.now()
+        self.save()
+        
+        # Update booking status
+        self.booking.status = 'confirmed'
+        self.booking.save()
+        
+        # Trigger confirmation email
+        from .tasks import send_payment_confirmation_email
+        send_payment_confirmation_email.delay(
+            payment_id=str(self.id),
+            user_email=self.customer_email
+        )
     
-    def __str__(self):
-        return f"Booking {self.booking_id} - {self.listing.title}"
-
-
-class Review(models.Model):
-    """
-    Review model for property reviews
-    """
-    review_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='reviews')
-    listing = models.ForeignKey(Listing, on_delete=models.CASCADE, related_name='reviews')
-    booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name='reviews', null=True, blank=True)
-    rating = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(5)])
-    comment = models.TextField()
-    created_at = models.DateTimeField(default=timezone.now)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        db_table = 'review'
-        indexes = [
-            models.Index(fields=['listing', 'rating']),
-            models.Index(fields=['user', 'created_at']),
-        ]
-        constraints = [
-            models.UniqueConstraint(
-                fields=['user', 'listing'],
-                name='one_review_per_listing_per_user'
-            )
-        ]
-    
-    def __str__(self):
-        return f"Review by {self.user} for {self.listing.title} - {self.rating} stars"
+    def mark_as_failed(self, error_message=None):
+        """Mark payment as failed"""
+        self.status = 'failed'
+        if error_message:
+            self.error_message = error_message
+        self.save()
